@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { fetchFeed, fetchWebPage } from '@/lib/fetcher';
 import { analyzeArticle } from '@/lib/gemini';
+import { sendSlackNotification } from '@/lib/slack';
+import { isScrapingAllowed } from '@/lib/robots';
 
 // Allow this to run for up to 5 minutes on Vercel Pro (or default 10s on Hobby, so be careful)
 export const maxDuration = 300;
@@ -33,6 +35,13 @@ export async function GET(request: Request) {
             logs.push(`Processing source: ${source.url} (${source.type})`);
 
             try {
+                // Check robots.txt
+                const allowed = await isScrapingAllowed(source.url, 'InfoAssistantBot');
+                if (!allowed) {
+                    logs.push(`Skipping ${source.url}: Disallowed by robots.txt`);
+                    continue;
+                }
+
                 if (source.type === 'rss') {
                     articles = await fetchFeed(source.url);
                 } else {
@@ -66,7 +75,7 @@ export async function GET(request: Request) {
                         source_id: source.id,
                         title: item.title,
                         url: item.url, // Assuming item.url is correct, not item.link as in diff
-                        content: item.content.substring(0, 50000), // Limit storage
+                        content: item.content.substring(0, 20000), // Limit storage for compliance
                         summary: analysis.summary,
                         published_at: item.publishedAt, // Assuming item.publishedAt is correct, not pubDate as in diff
                         importance_score: analysis.importance_score,

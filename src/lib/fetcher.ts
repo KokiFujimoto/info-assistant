@@ -36,7 +36,7 @@ export async function fetchWebPage(url: string): Promise<FetchedArticle | null> 
         const $ = cheerio.load(html);
 
         // Simple extraction - can be improved
-        const title = $('title').text();
+        const title = $('title').first().text();
         const content = $('article').text() || $('main').text() || $('body').text();
 
         return {
