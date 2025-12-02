@@ -41,7 +41,7 @@ export default function Home() {
     // Fetch articles
     const { data: articlesData } = await supabase
       .from('articles')
-      .select('id, title, url, summary, published_at, importance_score, sentiment, tags, entities')
+      .select('id, title, url, summary, published_at, importance_score, sentiment, tags, entities, source:sources(topic_id)')
       .order('published_at', { ascending: false });
 
     // Fetch topics

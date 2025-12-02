@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef, useMemo } from 'react';
 import dynamic from 'next/dynamic';
+import { forceCollide } from 'd3-force';
 
 import { generateGraphData, COLORS, Node, Link } from './graphUtils';
 
@@ -49,6 +50,20 @@ export function KnowledgeGraph({ topics, articles, className = "h-[600px]" }: { 
         if (fgRef.current) {
             fgRef.current.d3Force('charge').strength(physics.charge);
             fgRef.current.d3Force('link').distance(physics.linkDistance);
+
+            // Add collision force to prevent entity nodes from overlapping
+            // This keeps entity circles separated while allowing articles to cluster
+            fgRef.current.d3Force('collide', forceCollide()
+                .radius((node: any) => {
+                    // Apply collision only to entity nodes (sets)
+                    if (node.isEntitySet) {
+                        return node.val * 0.4; // Allow significant overlap but prevent total collapse
+                    }
+                    return 0; // No collision for articles
+                })
+                .strength(0.7) // Moderate strength to allow some flexibility
+            );
+
             fgRef.current.d3ReheatSimulation();
         }
     }, [physics]);
@@ -117,9 +132,9 @@ export function KnowledgeGraph({ topics, articles, className = "h-[600px]" }: { 
                                         <span>{Math.abs(physics.charge)}</span>
                                     </div>
                                     <input
-                                        type="range" min="-100" max="-5"
-                                        value={physics.charge}
-                                        onChange={e => setPhysics({ ...physics, charge: Number(e.target.value) })}
+                                        type="range" min="5" max="100"
+                                        value={Math.abs(physics.charge)}
+                                        onChange={e => setPhysics({ ...physics, charge: -Number(e.target.value) })}
                                         className="w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-indigo-500"
                                     />
                                 </div>
@@ -163,6 +178,9 @@ export function KnowledgeGraph({ topics, articles, className = "h-[600px]" }: { 
                 height={height}
                 nodeAutoColorBy="group"
                 nodeCanvasObject={(node: any, ctx, globalScale) => {
+                    // Skip rendering if node is not visible (filtered out)
+                    if (node.visible === false) return;
+
                     const label = node.name || '';
 
                     if (node.isEntitySet) {
@@ -173,16 +191,16 @@ export function KnowledgeGraph({ topics, articles, className = "h-[600px]" }: { 
                         ctx.beginPath();
                         ctx.arc(node.x || 0, node.y || 0, node.val, 0, 2 * Math.PI, false);
                         ctx.fillStyle = color;
-                        ctx.globalAlpha = 0.15; // Very transparent
+                        ctx.globalAlpha = 0.08; // Very transparent to prevent muddy look
                         ctx.fill();
                         ctx.globalAlpha = 1.0; // Reset alpha
 
-                        // Draw label in center - Subtle style
-                        ctx.fillStyle = 'rgba(255, 255, 255, 0.4)'; // Lighter, more subtle
+                        // Draw label in center - Clearer style
+                        ctx.fillStyle = 'rgba(255, 255, 255, 0.9)'; // Brighter for readability
                         ctx.textAlign = 'center';
                         ctx.textBaseline = 'middle';
-                        // Slightly larger than articles but subtle
-                        ctx.font = `${14 / globalScale}px Inter, sans-serif`;
+                        // Slightly larger than articles
+                        ctx.font = `${16 / globalScale}px Inter, sans-serif`;
                         ctx.fillText(label, node.x || 0, node.y || 0);
 
                     } else {
@@ -233,6 +251,7 @@ export function KnowledgeGraph({ topics, articles, className = "h-[600px]" }: { 
                     }
                 }}
                 linkColor={() => COLORS.link} // Restore visible links
+                linkVisibility={(link: any) => link.visible !== false} // Hide links when nodes are filtered
                 backgroundColor={COLORS.background}
                 nodeRelSize={4}
                 linkWidth={1} // Restore visible width

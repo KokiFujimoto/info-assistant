@@ -1,4 +1,3 @@
-
 export type Node = {
     id: string;
     group: string; // 'article' | 'topic' | 'person' | 'organization' | 'technology' | 'event' | 'location'
@@ -7,12 +6,14 @@ export type Node = {
     color?: string;
     importance?: number; // For articles
     isEntitySet?: boolean; // Custom flag for Venn diagram style
+    visible?: boolean; // Visibility flag for filtering
 };
 
 export type Link = {
     source: string;
     target: string;
     value?: number;
+    visible?: boolean; // Visibility flag for filtering
 };
 
 export type GraphData = {
@@ -35,7 +36,7 @@ export const COLORS = {
         location: '#ec4899', // Pink
         other: '#64748b' // Slate
     },
-    link: 'rgba(255, 255, 255, 0.4)' // Balanced link color
+    link: 'rgba(255, 255, 255, 0.2)' // More transparent to reduce clutter
 };
 
 type Filters = {
@@ -62,90 +63,147 @@ export function generateGraphData(
         }
     };
 
-    // 1. Add Topics (Hidden or Subtle)
-    if (filters.topics) {
-        topics.forEach(t => {
-            addNode({
-                id: `topic-${t.id}`,
-                group: 'topic',
-                val: 8,
-                name: t.keyword || 'No Keyword',
-                color: COLORS.node.topic
-            });
+    // 1. Add Topics - always generate, control visibility with filter
+    topics.forEach(t => {
+        addNode({
+            id: `topic-${t.id}`,
+            group: 'topic',
+            val: 8,
+            name: t.keyword || 'No Keyword',
+            color: COLORS.node.topic,
+            visible: filters.topics // Visibility controlled by filter
         });
-    }
+    });
 
-    // 2. Add Articles
-    if (filters.articles) {
-        articles.forEach(a => {
-            const isImportant = (a.importance_score || 0) >= 80;
-            addNode({
-                id: `article-${a.id}`,
-                group: isImportant ? 'article_important' : 'article',
-                val: 5,
-                name: a.title || 'No Title',
-                color: isImportant ? COLORS.node.article_important : COLORS.node.article,
-                importance: a.importance_score
-            });
-
-            // Link Article to Topic
-            if (filters.topics && a.source?.topic_id) {
-                links.push({ source: `topic-${a.source.topic_id}`, target: `article-${a.id}` });
-            }
+    // 2. Add Articles - always generate, control visibility with filter
+    articles.forEach(a => {
+        const isImportant = (a.importance_score || 0) >= 80;
+        addNode({
+            id: `article-${a.id}`,
+            group: isImportant ? 'article_important' : 'article',
+            val: 5,
+            name: a.title || 'No Title',
+            color: isImportant ? COLORS.node.article_important : COLORS.node.article,
+            importance: a.importance_score,
+            visible: filters.articles // Visibility controlled by filter
         });
-    }
 
-    // 3. Add Entities as Sets (Large Background Nodes)
-    if (filters.entities) {
-        // First, count articles per entity to filter out sparse ones
-        const entityCounts = new Map<string, number>();
-        articles.forEach(a => {
-            if (a.entities && Array.isArray(a.entities)) {
-                a.entities.forEach((e: any) => {
-                    if (!e.name) return;
-                    const entityId = `entity-${e.name}-${e.type}`;
-                    entityCounts.set(entityId, (entityCounts.get(entityId) || 0) + 1);
+        // Link Article to Topic - always create links
+        if (a.source?.topic_id) {
+            links.push({
+                source: `topic-${a.source.topic_id}`,
+                target: `article-${a.id}`
+            });
+        }
+    });
+
+    // 3. Add Entities as Sets - always generate, control visibility with filter
+    // First, count articles per entity to filter out sparse ones
+    const entityCounts = new Map<string, number>();
+    articles.forEach(a => {
+        if (a.entities && Array.isArray(a.entities)) {
+            a.entities.forEach((e: any) => {
+                if (!e.name) return;
+                const entityId = `entity-${e.name}-${e.type}`;
+                entityCounts.set(entityId, (entityCounts.get(entityId) || 0) + 1);
+            });
+        }
+    });
+
+    articles.forEach(a => {
+        if (a.entities && Array.isArray(a.entities)) {
+            a.entities.forEach((e: any) => {
+                if (!e.name) return; // Skip invalid entities
+
+                const entityId = `entity-${e.name}-${e.type}`;
+
+                // Only show entities with at least 3 articles
+                if ((entityCounts.get(entityId) || 0) < 3) return;
+
+                // Determine color based on type
+                let color = COLORS.node.other;
+                if (e.type === 'Person') color = COLORS.node.person;
+                if (e.type === 'Organization') color = COLORS.node.organization;
+                if (e.type === 'technology') color = COLORS.node.technology;
+                if (e.type === 'event') color = COLORS.node.event;
+                if (e.type === 'location') color = COLORS.node.location;
+
+                // Dynamic size based on link distance to ensure containment
+                // Radius should be > linkDistance to contain the connected nodes
+                // Increased multiplier from 2.5 to 3.5 for more spacing
+                const radius = Math.max(150, linkDistance * 2.0);
+
+                addNode({
+                    id: entityId,
+                    group: e.type,
+                    val: radius,
+                    name: e.name,
+                    color: color,
+                    isEntitySet: true, // Flag for custom rendering
+                    visible: filters.entities // Visibility controlled by filter
                 });
-            }
-        });
 
-        articles.forEach(a => {
-            if (a.entities && Array.isArray(a.entities)) {
-                a.entities.forEach((e: any) => {
-                    if (!e.name) return; // Skip invalid entities
+                // Link Article to Entity (for physics only, always hidden visually)
+                links.push({
+                    source: `article-${a.id}`,
+                    target: entityId,
+                    visible: false // Always hidden for visual consistency
+                });
+            });
+        }
+    });
 
-                    const entityId = `entity-${e.name}-${e.type}`;
+    // 4. Create article-to-article links based on shared entities
+    // Build a map of entity to articles
+    const entityToArticles = new Map<string, string[]>();
+    articles.forEach(a => {
+        if (a.entities && Array.isArray(a.entities)) {
+            a.entities.forEach((e: any) => {
+                if (!e.name) return;
+                const entityId = `entity-${e.name}-${e.type}`;
 
-                    // Only show entities with at least 3 articles
-                    if ((entityCounts.get(entityId) || 0) < 3) return;
+                // Only consider entities with at least 3 articles (same threshold as entity display)
+                if ((entityCounts.get(entityId) || 0) < 3) return;
 
-                    // Determine color based on type
-                    let color = COLORS.node.other;
-                    if (e.type === 'Person') color = COLORS.node.person;
-                    if (e.type === 'Organization') color = COLORS.node.organization;
-                    if (e.type === 'technology') color = COLORS.node.technology;
-                    if (e.type === 'event') color = COLORS.node.event;
-                    if (e.type === 'location') color = COLORS.node.location;
+                if (!entityToArticles.has(entityId)) {
+                    entityToArticles.set(entityId, []);
+                }
+                entityToArticles.get(entityId)!.push(`article-${a.id}`);
+            });
+        }
+    });
 
-                    // Dynamic size based on link distance to ensure containment
-                    // Radius should be > linkDistance to contain the connected nodes
-                    const radius = Math.max(120, linkDistance * 2.5);
-
-                    addNode({
-                        id: entityId,
-                        group: e.type,
-                        val: radius,
-                        name: e.name,
-                        color: color,
-                        isEntitySet: true // Flag for custom rendering
+    // Create links between articles that share common entities
+    const articlePairs = new Set<string>(); // To avoid duplicate links
+    entityToArticles.forEach((articleIds, entityId) => {
+        // For each entity, link all pairs of articles that share it
+        for (let i = 0; i < articleIds.length; i++) {
+            for (let j = i + 1; j < articleIds.length; j++) {
+                const pairKey = [articleIds[i], articleIds[j]].sort().join('-');
+                if (!articlePairs.has(pairKey)) {
+                    articlePairs.add(pairKey);
+                    links.push({
+                        source: articleIds[i],
+                        target: articleIds[j],
+                        // Article-to-article links are always visible (for consistency)
+                        // Their visibility is controlled by the article nodes themselves
                     });
-
-                    // Link Article to Entity (Invisible Link)
-                    links.push({ source: `article-${a.id}`, target: entityId });
-                });
+                }
             }
-        });
-    }
+        }
+    });
+
+    // Calculate link visibility based on connected nodes
+    links.forEach(link => {
+        // Skip if already explicitly set to false (e.g., entity links)
+        if (link.visible === false) return;
+
+        const sourceNode = nodes.find(n => n.id === link.source);
+        const targetNode = nodes.find(n => n.id === link.target);
+
+        // Link is visible only if both connected nodes are visible
+        link.visible = (sourceNode?.visible !== false) && (targetNode?.visible !== false);
+    });
 
     return { nodes, links };
 }

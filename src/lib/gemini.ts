@@ -115,6 +115,61 @@ ${content.substring(0, 10000)}
             sentiment: 'neutral',
             tags: [],
             embedding
-        };
+        }
+    }
+}
+
+export type RSSFeedSuggestion = {
+    name: string;
+    url: string;
+    description: string;
+    type: 'rss' | 'web';
+};
+
+export async function suggestRSSFeeds(keyword: string): Promise<RSSFeedSuggestion[]> {
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-001' });
+
+    const prompt = `
+あなたは情報収集のエキスパートです。以下のキーワードに関連する日本語の情報源を3-5件提案してください。
+
+# キーワード
+${keyword}
+
+# 指示
+- 実在する信頼性の高い日本語の情報源のみを推奨してください
+- 以下の2種類の情報源を提案できます：
+  1. RSSフィード: 自動的に複数記事を取得できるフィード（Yahoo!ニュース、Google News、ブログRSSなど）
+  2. ウェブページ: 定期的にチェックする価値のあるページ（企業のお知らせページ、ニュースセクション、公式サイトなど）
+- 各情報源について、名前、URL、簡単な説明、タイプを提供してください
+- 以下のJSON形式で出力してください（JSONのみ、他の説明は不要）:
+
+[
+  {
+    "name": "情報源の名前",
+    "url": "https://example.com/feed.rss または https://example.com/news",
+    "description": "この情報源の説明（1行、30文字以内）",
+    "type": "rss" または "web"
+  }
+]
+
+注意: 
+- URLは必ず実在するURLを指定してください
+- RSSフィードの場合は type を "rss" に、通常のウェブページの場合は "web" にしてください
+- RSSフィードが利用可能な場合は優先的に推奨してください
+`;
+
+    try {
+        const result = await model.generateContent(prompt);
+        const response = await result.response;
+        const text = response.text();
+
+        // Clean JSON response
+        const jsonStr = text.replace(/```json/g, '').replace(/```/g, '').trim();
+        const suggestions = JSON.parse(jsonStr);
+
+        return Array.isArray(suggestions) ? suggestions.slice(0, 5) : [];
+    } catch (error) {
+        console.error('RSS Feed Suggestion Error:', error);
+        return [];
     }
 }

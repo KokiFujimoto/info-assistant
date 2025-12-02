@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { Plus, Trash2, ExternalLink, Loader2 } from 'lucide-react';
+import { Plus, Trash2, ExternalLink, Loader2, Sparkles } from 'lucide-react';
 
 type Topic = {
     id: number;
@@ -19,6 +19,13 @@ type Source = {
     type: string;
 };
 
+type SuggestedSource = {
+    name: string;
+    url: string;
+    description: string;
+    type: 'rss' | 'web';
+};
+
 export default function TopicsPage() {
     const searchParams = useSearchParams();
     const [topics, setTopics] = useState<Topic[]>([]);
@@ -29,6 +36,9 @@ export default function TopicsPage() {
     const [isLoading, setIsLoading] = useState(true);
     const [isAddingTopic, setIsAddingTopic] = useState(false);
     const [isAddingSource, setIsAddingSource] = useState(false);
+    const [suggestedSources, setSuggestedSources] = useState<SuggestedSource[]>([]);
+    const [isFetchingSuggestions, setIsFetchingSuggestions] = useState(false);
+    const [showSuggestions, setShowSuggestions] = useState(false);
 
     useEffect(() => {
         fetchData();
@@ -178,6 +188,52 @@ export default function TopicsPage() {
         }
     };
 
+    const handleFetchSuggestions = async () => {
+        if (!selectedTopicId) return;
+
+        setIsFetchingSuggestions(true);
+        try {
+            const res = await fetch(`/api/topics/${selectedTopicId}/suggest-sources`);
+            if (res.ok) {
+                const { suggestions } = await res.json();
+                setSuggestedSources(suggestions || []);
+                setShowSuggestions(true);
+            } else {
+                alert('提案の取得に失敗しました。');
+            }
+        } catch (error) {
+            console.error('Error fetching suggestions:', error);
+        } finally {
+            setIsFetchingSuggestions(false);
+        }
+    };
+
+    const handleAddSuggestedSource = async (suggestion: SuggestedSource) => {
+        if (!selectedTopicId) return;
+
+        try {
+            const res = await fetch('/api/sources', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    topicId: selectedTopicId,
+                    url: suggestion.url,
+                }),
+            });
+
+            if (res.ok) {
+                const { source } = await res.json();
+                setSources([...sources, source]);
+                // Remove from suggestions
+                setSuggestedSources(suggestedSources.filter(s => s.url !== suggestion.url));
+            } else {
+                alert('追加に失敗しました。');
+            }
+        } catch (error) {
+            console.error('Error adding suggested source:', error);
+        }
+    };
+
     const selectedTopic = topics.find(t => t.id === selectedTopicId);
     const filteredSources = sources.filter(s => s.topic_id === selectedTopicId);
 
@@ -302,6 +358,60 @@ export default function TopicsPage() {
                                         </button>
                                     </div>
                                 </form>
+
+                                {/* Suggest Sources Button */}
+                                <button
+                                    onClick={handleFetchSuggestions}
+                                    disabled={isFetchingSuggestions}
+                                    className="w-full bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white px-4 py-3 rounded-xl font-medium transition flex items-center justify-center gap-2 mb-4 disabled:opacity-50"
+                                >
+                                    {isFetchingSuggestions ? (
+                                        <>
+                                            <Loader2 className="w-5 h-5 animate-spin" />
+                                            AI が提案を生成中...
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Sparkles className="w-5 h-5" />
+                                            おすすめの情報源を表示
+                                        </>
+                                    )}
+                                </button>
+
+                                {/* Suggested Sources */}
+                                {showSuggestions && suggestedSources.length > 0 && (
+                                    <div className="bg-gradient-to-br from-purple-900/20 to-indigo-900/20 border border-purple-500/30 rounded-xl p-4 mb-4">
+                                        <h4 className="text-sm font-semibold text-purple-300 mb-3 flex items-center gap-2">
+                                            <Sparkles className="w-4 h-4" />
+                                            AI が提案する情報源
+                                        </h4>
+                                        <div className="space-y-2">
+                                            {suggestedSources.map((suggestion, idx) => (
+                                                <div key={idx} className="bg-[#1e293b] border border-purple-500/20 rounded-lg p-3 flex items-center justify-between hover:border-purple-500/40 transition">
+                                                    <div className="flex-1">
+                                                        <div className="flex items-center gap-2 mb-1">
+                                                            <h5 className="font-medium text-white text-sm">{suggestion.name}</h5>
+                                                            <span className={`text-xs px-2 py-0.5 rounded ${suggestion.type === 'rss' ? 'bg-orange-500/20 text-orange-400' : 'bg-blue-500/20 text-blue-400'}`}>
+                                                                {suggestion.type === 'rss' ? 'RSS' : 'WEB'}
+                                                            </span>
+                                                        </div>
+                                                        <p className="text-xs text-slate-400 mb-1">{suggestion.description}</p>
+                                                        <a href={suggestion.url} target="_blank" rel="noopener noreferrer" className="text-xs text-purple-400 hover:text-purple-300 flex items-center gap-1">
+                                                            {suggestion.url} <ExternalLink className="w-3 h-3" />
+                                                        </a>
+                                                    </div>
+                                                    <button
+                                                        onClick={() => handleAddSuggestedSource(suggestion)}
+                                                        className="ml-3 bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition flex items-center gap-2"
+                                                    >
+                                                        <Plus className="w-4 h-4" />
+                                                        追加
+                                                    </button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
 
                                 {/* Source List */}
                                 <div className="space-y-3">
