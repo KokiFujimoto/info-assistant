@@ -4,6 +4,7 @@ import { fetchFeed, fetchWebPage } from '@/lib/fetcher';
 import { analyzeArticle } from '@/lib/gemini';
 import { sendSlackNotification } from '@/lib/slack';
 import { isScrapingAllowed } from '@/lib/robots';
+import { shouldSkipArticle } from '@/lib/recommendation';
 
 // Allow this to run for up to 5 minutes on Vercel Pro (or default 10s on Hobby, so be careful)
 export const maxDuration = 300;
@@ -67,8 +68,23 @@ export async function GET(request: Request) {
                     // New article found!
                     logs.push(`New article found: ${item.title}`);
 
+                    // ...
+
                     // Comprehensive AI Analysis
                     const analysis = await analyzeArticle(item.title, item.content);
+
+                    // Check recommendation engine
+                    const recommendation = await shouldSkipArticle(item.title, analysis.summary, analysis.embedding);
+
+                    if (recommendation.skip) {
+                        logs.push(`Skipping article based on feedback: ${item.title} (${recommendation.reason})`);
+                        // Option 1: Skip entirely
+                        // continue; 
+
+                        // Option 2: Save but mark as very low importance (so it doesn't show up prominently but is recorded)
+                        analysis.importance_score = 10;
+                        analysis.tags.push('Auto-Filtered');
+                    }
 
                     // Save with all analysis fields
                     const { data: savedArticle, error: saveError } = await supabase.from('articles').insert({

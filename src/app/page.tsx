@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import { KnowledgeGraph } from '@/components/KnowledgeGraph';
 import { AutoRefresher } from '@/components/AutoRefresher';
+import { FeedbackMode } from '@/components/FeedbackMode';
+import { SwipeableArticleCard } from '@/components/SwipeableArticleCard';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -32,6 +34,8 @@ export default function Home() {
   const [currentPage, setCurrentPage] = useState(1);
   const [sortBy, setSortBy] = useState<'importance' | 'date'>('importance'); // Default to importance
   const [selectedTag, setSelectedTag] = useState<string | null>(null); // Tag or Entity filter
+  const [isFeedbackMode, setIsFeedbackMode] = useState(false);
+  const [articleFeedback, setArticleFeedback] = useState<Map<number, boolean>>(new Map()); // articleId -> isInterested
 
   useEffect(() => {
     fetchData();
@@ -50,9 +54,21 @@ export default function Home() {
     // Fetch read status
     const { data: readStatus } = await supabase.from('article_read_status').select('article_id');
 
+    // Fetch feedback
+    const { data: feedbackData } = await supabase.from('article_feedback').select('article_id, is_interested').order('created_at', { ascending: false });
+
+    // Create map of article_id to latest feedback
+    const feedbackMap = new Map<number, boolean>();
+    feedbackData?.forEach((fb: any) => {
+      if (!feedbackMap.has(fb.article_id)) {
+        feedbackMap.set(fb.article_id, fb.is_interested);
+      }
+    });
+
     setArticles(articlesData || []);
     setTopics(topicsData || []);
     setReadArticles(new Set(readStatus?.map((r: any) => r.article_id) || []));
+    setArticleFeedback(feedbackMap);
   };
 
   const toggleReadStatus = async (articleId: number) => {
@@ -144,14 +160,40 @@ export default function Home() {
     setCurrentPage(1);
   }, [filterMode, pageSize, sortBy]);
 
+  const handleFeedback = async (articleId: number, isInterested: boolean) => {
+    try {
+      await fetch('/api/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ articleId, isInterested })
+      });
+
+      // Update feedback state immediately for visual feedback
+      setArticleFeedback(prev => {
+        const newMap = new Map(prev);
+        newMap.set(articleId, isInterested);
+        return newMap;
+      });
+
+      // Mark as read to clear from queue
+      if (!readArticles.has(articleId)) {
+        toggleReadStatus(articleId);
+      }
+    } catch (error) {
+      console.error('Error sending feedback:', error);
+    }
+  };
+
   return (
     <div className="max-w-5xl mx-auto px-8 py-8">
       <AutoRefresher />
       <div className="p-6">
         {/* Header */}
         <header className="mb-10">
-          <h1 className="text-3xl font-bold text-white mb-2">こんにちは、Userさん</h1>
-          <p className="text-slate-400">最新のインテリジェンスフィードをチェックしましょう。</p>
+          <div>
+            <h1 className="text-3xl font-bold text-white mb-2">こんにちは、Userさん</h1>
+            <p className="text-slate-400">最新のインテリジェンスフィードをチェックしましょう。</p>
+          </div>
         </header>
 
         {/* Topic Overview */}
@@ -294,94 +336,21 @@ export default function Home() {
                     const badge = getImportanceBadge(article.importance_score || 50);
                     const isRead = readArticles.has(article.id);
                     const isFading = fadingOut.has(article.id);
+                    const feedbackState = articleFeedback.has(article.id) ? articleFeedback.get(article.id) : null;
 
                     return (
-                      <div
+                      <SwipeableArticleCard
                         key={article.id}
-                        className={`bg-[#1e293b] border ${article.importance_score >= 80 ? 'border-red-500/50' : 'border-slate-700/50'
-                          } rounded-2xl p-6 hover:border-indigo-500/50 group ${isRead && !isFading ? 'opacity-60' : ''
-                          } ${isFading ? 'animate-fadeOut' : 'transition'
-                          }`}
-                      >
-                        {/* Header with importance and sentiment */}
-                        <div className="flex items-start justify-between mb-3">
-                          <div className="flex items-center gap-2">
-                            {/* Read checkbox */}
-                            <button
-                              onClick={() => toggleReadStatus(article.id)}
-                              className={`w-6 h-6 rounded border-2 flex items-center justify-center transition ${isRead
-                                ? 'bg-green-500 border-green-500'
-                                : 'border-slate-600 hover:border-indigo-500'
-                                }`}
-                              title={isRead ? '未読にする' : '既読にする'}
-                            >
-                              {isRead && (
-                                <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                                </svg>
-                              )}
-                            </button>
-
-                            <span className={`${badge.color} text-white text-xs px-2 py-1 rounded-full font-medium`}>
-                              {badge.icon} {badge.label} {article.importance_score || 50}/100
-                            </span>
-                            {article.sentiment && (
-                              <span className="text-xl" title={article.sentiment}>
-                                {getSentimentIcon(article.sentiment)}
-                              </span>
-                            )}
-                          </div>
-                          <span className="text-xs text-slate-500">
-                            {new Date(article.published_at).toLocaleDateString('ja-JP')}
-                          </span>
-                        </div>
-
-                        {/* Title */}
-                        <h3 className="text-lg font-semibold text-white mb-3 group-hover:text-indigo-400 transition">
-                          <a href={article.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2">
-                            {article.title}
-                            <svg className="w-4 h-4 opacity-0 group-hover:opacity-100 transition" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                            </svg>
-                          </a>
-                        </h3>
-
-                        {/* Summary */}
-                        {article.summary && (
-                          <p className="text-slate-300 text-sm mb-4 leading-relaxed">
-                            {article.summary}
-                          </p>
-                        )}
-
-                        {/* Tags and Entities */}
-                        <div className="flex flex-wrap gap-2">
-                          {article.tags && article.tags.length > 0 && article.tags.map((tag: string, idx: number) => (
-                            <button
-                              key={idx}
-                              onClick={(e) => {
-                                e.preventDefault();
-                                setSelectedTag(tag);
-                              }}
-                              className="bg-indigo-500/10 text-indigo-300 text-xs px-3 py-1 rounded-full border border-indigo-500/20 hover:bg-indigo-500/20 transition"
-                            >
-                              #{tag}
-                            </button>
-                          ))}
-                          {article.entities && article.entities.slice(0, 3).map((entity: any, idx: number) => (
-                            <button
-                              key={idx}
-                              onClick={(e) => {
-                                e.preventDefault();
-                                setSelectedTag(entity.name);
-                              }}
-                              className="bg-purple-500/10 text-purple-300 text-xs px-3 py-1 rounded-full border border-purple-500/20 hover:bg-purple-500/20 transition"
-                              title={entity.type}
-                            >
-                              {entity.name}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
+                        article={article}
+                        badge={badge}
+                        isRead={isRead}
+                        isFading={isFading}
+                        feedbackState={feedbackState ?? null}
+                        onToggleRead={() => toggleReadStatus(article.id)}
+                        onFeedback={(isInterested) => handleFeedback(article.id, isInterested)}
+                        onTagClick={setSelectedTag}
+                        getSentimentIcon={getSentimentIcon}
+                      />
                     );
                   })}
                 </div>
