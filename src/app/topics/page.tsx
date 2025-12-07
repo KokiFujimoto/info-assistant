@@ -4,6 +4,8 @@ import { useEffect, useState, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Plus, Trash2, ExternalLink, Loader2, Sparkles } from 'lucide-react';
 import { ProtectedRoute } from '@/components/ProtectedRoute';
+import { useAuth } from '@/components/AuthProvider';
+import { supabase } from '@/lib/auth';
 
 type Topic = {
     id: number;
@@ -29,6 +31,7 @@ type SuggestedSource = {
 
 function TopicsPageContent() {
     const searchParams = useSearchParams();
+    const { user } = useAuth();
     const [topics, setTopics] = useState<Topic[]>([]);
     const [sources, setSources] = useState<Source[]>([]);
     const [selectedTopicId, setSelectedTopicId] = useState<number | null>(null);
@@ -42,37 +45,56 @@ function TopicsPageContent() {
     const [showSuggestions, setShowSuggestions] = useState(false);
 
     useEffect(() => {
-        fetchData();
-    }, []);
+        if (user) {
+            fetchData();
+        }
+    }, [user]);
 
     const fetchData = async () => {
-        try {
-            const [topicsRes, sourcesRes] = await Promise.all([
-                fetch('/api/topics', { credentials: 'include' }),
-                fetch('/api/sources', { credentials: 'include' })
-            ]);
+        if (!user) return;
 
-            if (topicsRes.ok) {
-                const data = await topicsRes.json();
-                setTopics(data.topics || []);
+        try {
+            // Fetch topics for this user directly from Supabase
+            const { data: topicsData, error: topicsError } = await supabase
+                .from('topics')
+                .select('*')
+                .eq('user_id', user.id)
+                .order('created_at', { ascending: false });
+
+            if (topicsError) {
+                console.error('Error fetching topics:', topicsError);
+            } else {
+                setTopics(topicsData || []);
 
                 // Check if there's a topic ID in the URL
                 const topicIdParam = searchParams.get('id');
                 if (topicIdParam) {
                     const topicId = parseInt(topicIdParam);
-                    if (data.topics && data.topics.find((t: Topic) => t.id === topicId)) {
+                    if (topicsData && topicsData.find((t: Topic) => t.id === topicId)) {
                         setSelectedTopicId(topicId);
-                    } else if (data.topics && data.topics.length > 0) {
-                        setSelectedTopicId(data.topics[0].id);
+                    } else if (topicsData && topicsData.length > 0) {
+                        setSelectedTopicId(topicsData[0].id);
                     }
-                } else if (data.topics && data.topics.length > 0) {
-                    setSelectedTopicId(data.topics[0].id);
+                } else if (topicsData && topicsData.length > 0) {
+                    setSelectedTopicId(topicsData[0].id);
                 }
             }
 
-            if (sourcesRes.ok) {
-                const data = await sourcesRes.json();
-                setSources(data.sources || []);
+            // Get user's topic IDs
+            const userTopicIds = topicsData?.map(t => t.id) || [];
+
+            // Fetch sources for user's topics
+            if (userTopicIds.length > 0) {
+                const { data: sourcesData, error: sourcesError } = await supabase
+                    .from('sources')
+                    .select('*')
+                    .in('topic_id', userTopicIds);
+
+                if (sourcesError) {
+                    console.error('Error fetching sources:', sourcesError);
+                } else {
+                    setSources(sourcesData || []);
+                }
             }
         } catch (error) {
             console.error('Error fetching data:', error);
@@ -83,24 +105,31 @@ function TopicsPageContent() {
 
     const handleAddTopic = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!newTopicKeyword.trim()) return;
+        if (!newTopicKeyword.trim() || !user) return;
 
         setIsAddingTopic(true);
         try {
-            const res = await fetch('/api/topics', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ keyword: newTopicKeyword }),
-                credentials: 'include',
-            });
+            // Insert topic directly to Supabase
+            const { data: topic, error } = await supabase
+                .from('topics')
+                .insert({ keyword: newTopicKeyword, user_id: user.id })
+                .select()
+                .single();
 
-            if (res.ok) {
-                const { topic } = await res.json();
+            if (error) {
+                console.error('Error adding topic:', error);
+                alert('追加に失敗しました。');
+            } else {
                 setTopics([topic, ...topics]);
                 setNewTopicKeyword('');
                 setSelectedTopicId(topic.id);
-            } else {
-                alert('追加に失敗しました。');
+
+                // Trigger AI source discovery via API
+                fetch('/api/topics/discover-sources', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ topicId: topic.id, keyword: newTopicKeyword }),
+                }).catch(console.error);
             }
         } catch (error) {
             console.error('Error adding topic:', error);
@@ -111,17 +140,16 @@ function TopicsPageContent() {
 
     const handleToggleTopic = async (id: number, currentState: boolean) => {
         try {
-            const res = await fetch(`/api/topics/${id}`, {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ is_active: !currentState }),
-                credentials: 'include',
-            });
+            const { error } = await supabase
+                .from('topics')
+                .update({ is_active: !currentState })
+                .eq('id', id);
 
-            if (res.ok) {
-                setTopics(topics.map(t => t.id === id ? { ...t, is_active: !currentState } : t));
-            } else {
+            if (error) {
+                console.error('Error toggling topic:', error);
                 alert('更新に失敗しました。');
+            } else {
+                setTopics(topics.map(t => t.id === id ? { ...t, is_active: !currentState } : t));
             }
         } catch (error) {
             console.error('Error toggling topic:', error);
@@ -132,15 +160,20 @@ function TopicsPageContent() {
         if (!confirm('このトピックを削除しますか？関連する情報源も削除されます。')) return;
 
         try {
-            const res = await fetch(`/api/topics/${id}`, { method: 'DELETE', credentials: 'include' });
-            if (res.ok) {
+            const { error } = await supabase
+                .from('topics')
+                .delete()
+                .eq('id', id);
+
+            if (error) {
+                console.error('Error deleting topic:', error);
+                alert('削除に失敗しました。');
+            } else {
                 setTopics(topics.filter(t => t.id !== id));
                 setSources(sources.filter(s => s.topic_id !== id));
                 if (selectedTopicId === id) {
                     setSelectedTopicId(topics[0]?.id || null);
                 }
-            } else {
-                alert('削除に失敗しました。');
             }
         } catch (error) {
             console.error('Error deleting topic:', error);
@@ -153,22 +186,23 @@ function TopicsPageContent() {
 
         setIsAddingSource(true);
         try {
-            const res = await fetch('/api/sources', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    topicId: selectedTopicId,
+            const { data: source, error } = await supabase
+                .from('sources')
+                .insert({
+                    topic_id: selectedTopicId,
                     url: newSourceUrl,
-                }),
-                credentials: 'include',
-            });
+                    name: new URL(newSourceUrl).hostname,
+                    type: newSourceUrl.includes('/feed') || newSourceUrl.includes('/rss') ? 'rss' : 'web'
+                })
+                .select()
+                .single();
 
-            if (res.ok) {
-                const { source } = await res.json();
+            if (error) {
+                console.error('Error adding source:', error);
+                alert('追加に失敗しました。');
+            } else {
                 setSources([...sources, source]);
                 setNewSourceUrl('');
-            } else {
-                alert('追加に失敗しました。');
             }
         } catch (error) {
             console.error('Error adding source:', error);
@@ -181,11 +215,16 @@ function TopicsPageContent() {
         if (!confirm('この情報源を削除しますか？')) return;
 
         try {
-            const res = await fetch(`/api/sources/${id}`, { method: 'DELETE', credentials: 'include' });
-            if (res.ok) {
-                setSources(sources.filter(s => s.id !== id));
-            } else {
+            const { error } = await supabase
+                .from('sources')
+                .delete()
+                .eq('id', id);
+
+            if (error) {
+                console.error('Error deleting source:', error);
                 alert('削除に失敗しました。');
+            } else {
+                setSources(sources.filter(s => s.id !== id));
             }
         } catch (error) {
             console.error('Error deleting source:', error);
@@ -216,23 +255,23 @@ function TopicsPageContent() {
         if (!selectedTopicId) return;
 
         try {
-            const res = await fetch('/api/sources', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    topicId: selectedTopicId,
+            const { data: source, error } = await supabase
+                .from('sources')
+                .insert({
+                    topic_id: selectedTopicId,
                     url: suggestion.url,
-                }),
-                credentials: 'include',
-            });
+                    name: suggestion.name,
+                    type: suggestion.type
+                })
+                .select()
+                .single();
 
-            if (res.ok) {
-                const { source } = await res.json();
-                setSources([...sources, source]);
-                // Remove from suggestions
-                setSuggestedSources(suggestedSources.filter(s => s.url !== suggestion.url));
-            } else {
+            if (error) {
+                console.error('Error adding source:', error);
                 alert('追加に失敗しました。');
+            } else {
+                setSources([...sources, source]);
+                setSuggestedSources(suggestedSources.filter(s => s.url !== suggestion.url));
             }
         } catch (error) {
             console.error('Error adding suggested source:', error);

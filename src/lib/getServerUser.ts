@@ -7,6 +7,8 @@ import { createServerClient } from '@supabase/ssr';
  */
 export async function createServerSupabase() {
     const cookieStore = await cookies();
+    const allCookies = cookieStore.getAll();
+    console.log('Server Cookies:', allCookies.map(c => c.name)); // デバッグ用
 
     return createServerClient(
         process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -14,7 +16,7 @@ export async function createServerSupabase() {
         {
             cookies: {
                 getAll() {
-                    return cookieStore.getAll();
+                    return allCookies;
                 },
                 setAll(cookiesToSet) {
                     try {
@@ -36,7 +38,8 @@ export async function createServerSupabase() {
  */
 export async function getServerUser() {
     const supabase = await createServerSupabase();
-    const { data: { user } } = await supabase.auth.getUser();
+    const { data: { user }, error } = await supabase.auth.getUser();
+    console.log('getServerUser - error:', error?.message, 'user:', user?.id); // デバッグ用
     return user;
 }
 
