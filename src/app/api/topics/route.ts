@@ -1,14 +1,21 @@
 import { NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { createServerSupabase, requireAuth } from '@/lib/getServerUser';
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
 
 export async function GET() {
     try {
+        const { error: authError, user } = await requireAuth();
+        if (authError) {
+            return NextResponse.json({ error: authError }, { status: 401 });
+        }
+
+        const supabase = await createServerSupabase();
         const { data: topics, error } = await supabase
             .from('topics')
             .select('*')
+            .eq('user_id', user!.id)
             .order('created_at', { ascending: false });
 
         if (error) {
@@ -25,16 +32,23 @@ export async function GET() {
 
 export async function POST(request: Request) {
     try {
+        const { error: authError, user } = await requireAuth();
+        if (authError) {
+            return NextResponse.json({ error: authError }, { status: 401 });
+        }
+
         const { keyword } = await request.json();
 
         if (!keyword) {
             return NextResponse.json({ error: 'Keyword is required' }, { status: 400 });
         }
 
-        // 1. Save Topic
+        const supabase = await createServerSupabase();
+
+        // 1. Save Topic with user_id
         const { data: topic, error: topicError } = await supabase
             .from('topics')
-            .insert({ keyword })
+            .insert({ keyword, user_id: user!.id })
             .select()
             .single();
 
@@ -44,8 +58,6 @@ export async function POST(request: Request) {
         }
 
         // 2. AI Agent: Discover Sources
-        // In a real app, we would search Google/Bing here.
-        // For this prototype, we ask Gemini to suggest RSS feeds or URLs.
         const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash-001' });
         const prompt = `
       User wants to track: "${keyword}".
@@ -59,7 +71,6 @@ export async function POST(request: Request) {
             const result = await model.generateContent(prompt);
             const response = await result.response;
             const text = response.text();
-            // Clean up markdown code blocks if present
             const jsonStr = text.replace(/```json/g, '').replace(/```/g, '').trim();
             const candidates = JSON.parse(jsonStr);
 
@@ -68,7 +79,6 @@ export async function POST(request: Request) {
 
             for (const candidate of candidates) {
                 try {
-                    // Simple validation: Check if URL is reachable
                     const res = await fetch(candidate.url, {
                         method: 'HEAD',
                         headers: {
@@ -76,7 +86,7 @@ export async function POST(request: Request) {
                         }
                     });
 
-                    if (res.ok || res.status === 405) { // 405 Method Not Allowed might mean HEAD is blocked but GET works
+                    if (res.ok || res.status === 405) {
                         validSources.push({
                             topic_id: topic.id,
                             url: candidate.url,
@@ -89,7 +99,7 @@ export async function POST(request: Request) {
                     console.log(`Validation failed for ${candidate.url}:`, e);
                 }
 
-                if (validSources.length >= 3) break; // Stop after finding 3 valid sources
+                if (validSources.length >= 3) break;
             }
 
             if (validSources.length > 0) {
@@ -113,7 +123,6 @@ export async function POST(request: Request) {
 
         } catch (aiError) {
             console.error('AI Error:', aiError);
-            // Non-blocking error, we still return success for the topic
         }
 
         return NextResponse.json({ success: true, topic });

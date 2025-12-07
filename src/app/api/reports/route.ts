@@ -1,8 +1,14 @@
 import { NextResponse } from 'next/server';
 import { generateMarkdownReport, generateHTMLReport } from '@/lib/reportGenerator';
+import { requireAuth } from '@/lib/getServerUser';
 
 export async function POST(request: Request) {
     try {
+        const { error: authError } = await requireAuth();
+        if (authError) {
+            return NextResponse.json({ error: authError }, { status: 401 });
+        }
+
         const { type, format } = await request.json();
 
         if (!type || !['daily', 'weekly'].includes(type)) {

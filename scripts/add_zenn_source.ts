@@ -16,6 +16,11 @@ async function addZennSource() {
         topic = newTopic;
     }
 
+    if (!topic) {
+        console.error('Failed to get or create topic');
+        return;
+    }
+
     // Insert Zenn RSS
     const { error } = await supabase.from('sources').insert({
         topic_id: topic.id,

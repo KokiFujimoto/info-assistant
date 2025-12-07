@@ -1,12 +1,23 @@
 import { NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { createServerSupabase, requireAuth } from '@/lib/getServerUser';
 
 export async function GET(request: Request) {
     try {
+        const { error: authError, user } = await requireAuth();
+        if (authError) {
+            return NextResponse.json({ error: authError }, { status: 401 });
+        }
+
         const { searchParams } = new URL(request.url);
         const topicId = searchParams.get('topicId');
 
-        let query = supabase.from('sources').select('*, topics(keyword)');
+        const supabase = await createServerSupabase();
+
+        // Get sources for user's topics only
+        let query = supabase
+            .from('sources')
+            .select('*, topics!inner(keyword, user_id)')
+            .eq('topics.user_id', user!.id);
 
         if (topicId) {
             query = query.eq('topic_id', topicId);
@@ -26,10 +37,29 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
     try {
+        const { error: authError, user } = await requireAuth();
+        if (authError) {
+            return NextResponse.json({ error: authError }, { status: 401 });
+        }
+
         const { topicId, url, name, type } = await request.json();
 
         if (!topicId || !url) {
             return NextResponse.json({ error: 'Topic ID and URL are required' }, { status: 400 });
+        }
+
+        const supabase = await createServerSupabase();
+
+        // Verify topic belongs to user
+        const { data: topic, error: topicError } = await supabase
+            .from('topics')
+            .select('id')
+            .eq('id', topicId)
+            .eq('user_id', user!.id)
+            .single();
+
+        if (topicError || !topic) {
+            return NextResponse.json({ error: 'Topic not found or access denied' }, { status: 403 });
         }
 
         let finalUrl = url;

@@ -1,16 +1,18 @@
 import { NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-const supabase = createClient(supabaseUrl, supabaseServiceKey);
+import { createServerSupabase, requireAuth } from '@/lib/getServerUser';
 
 export async function GET() {
     try {
+        const { error: authError, user } = await requireAuth();
+        if (authError) {
+            return NextResponse.json({ error: authError }, { status: 401 });
+        }
+
+        const supabase = await createServerSupabase();
         const { data, error } = await supabase
             .from('settings')
             .select('value')
-            .eq('id', 'notification_settings')
+            .eq('id', `notification_settings_${user!.id}`)
             .single();
 
         if (error) {
@@ -34,6 +36,11 @@ export async function GET() {
 
 export async function POST(request: Request) {
     try {
+        const { error: authError, user } = await requireAuth();
+        if (authError) {
+            return NextResponse.json({ error: authError }, { status: 401 });
+        }
+
         const body = await request.json();
 
         // Validate body
@@ -41,10 +48,11 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: 'Invalid min_importance' }, { status: 400 });
         }
 
+        const supabase = await createServerSupabase();
         const { error } = await supabase
             .from('settings')
             .upsert({
-                id: 'notification_settings',
+                id: `notification_settings_${user!.id}`,
                 value: body,
                 updated_at: new Date().toISOString()
             });
