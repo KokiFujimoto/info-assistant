@@ -32,21 +32,21 @@ export default function GraphPage() {
             .eq('user_id', user.id);
 
         // Get topic IDs for this user
-        const userTopicIds = topicsData?.map(t => t.id) || [];
+        const userTopicIds = new Set(topicsData?.map(t => t.id) || []);
 
-        // Fetch articles for user's topics only
-        let articlesQuery = supabase
+        // Fetch all articles with source info
+        const { data: allArticles } = await supabase
             .from('articles')
-            .select('id, title, url, summary, published_at, importance_score, sentiment, tags, entities, source:sources!inner(topic_id)')
+            .select('id, title, url, summary, published_at, importance_score, sentiment, tags, entities, source:sources(topic_id)')
             .order('published_at', { ascending: false });
 
-        if (userTopicIds.length > 0) {
-            articlesQuery = articlesQuery.in('source.topic_id', userTopicIds);
-        }
+        // Filter articles to only include those from user's topics
+        const articlesData = allArticles?.filter(article => {
+            const source = article.source as any;
+            return source && userTopicIds.has(source.topic_id);
+        }) || [];
 
-        const { data: articlesData } = await articlesQuery;
-
-        setArticles(articlesData || []);
+        setArticles(articlesData);
         setTopics(topicsData || []);
     };
 
