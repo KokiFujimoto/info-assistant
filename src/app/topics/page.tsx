@@ -3,6 +3,7 @@
 import { useEffect, useState, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Plus, Trash2, ExternalLink, Loader2, Sparkles } from 'lucide-react';
+import { ProtectedRoute } from '@/components/ProtectedRoute';
 
 type Topic = {
     id: number;
@@ -464,14 +465,16 @@ function TopicsPageContent() {
 
 export default function TopicsPage() {
     return (
-        <Suspense fallback={
-            <div className="p-8 max-w-7xl mx-auto">
-                <div className="flex items-center justify-center min-h-[50vh]">
-                    <Loader2 className="w-8 h-8 animate-spin text-indigo-500" />
+        <ProtectedRoute>
+            <Suspense fallback={
+                <div className="p-8 max-w-7xl mx-auto">
+                    <div className="flex items-center justify-center min-h-[50vh]">
+                        <Loader2 className="w-8 h-8 animate-spin text-indigo-500" />
+                    </div>
                 </div>
-            </div>
-        }>
-            <TopicsPageContent />
-        </Suspense>
+            }>
+                <TopicsPageContent />
+            </Suspense>
+        </ProtectedRoute>
     );
 }
