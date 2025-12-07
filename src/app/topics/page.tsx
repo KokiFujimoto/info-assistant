@@ -47,8 +47,8 @@ function TopicsPageContent() {
     const fetchData = async () => {
         try {
             const [topicsRes, sourcesRes] = await Promise.all([
-                fetch('/api/topics'),
-                fetch('/api/sources')
+                fetch('/api/topics', { credentials: 'include' }),
+                fetch('/api/sources', { credentials: 'include' })
             ]);
 
             if (topicsRes.ok) {
@@ -90,6 +90,7 @@ function TopicsPageContent() {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ keyword: newTopicKeyword }),
+                credentials: 'include',
             });
 
             if (res.ok) {
@@ -113,6 +114,7 @@ function TopicsPageContent() {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ is_active: !currentState }),
+                credentials: 'include',
             });
 
             if (res.ok) {
@@ -129,7 +131,7 @@ function TopicsPageContent() {
         if (!confirm('このトピックを削除しますか？関連する情報源も削除されます。')) return;
 
         try {
-            const res = await fetch(`/api/topics/${id}`, { method: 'DELETE' });
+            const res = await fetch(`/api/topics/${id}`, { method: 'DELETE', credentials: 'include' });
             if (res.ok) {
                 setTopics(topics.filter(t => t.id !== id));
                 setSources(sources.filter(s => s.topic_id !== id));
@@ -157,6 +159,7 @@ function TopicsPageContent() {
                     topicId: selectedTopicId,
                     url: newSourceUrl,
                 }),
+                credentials: 'include',
             });
 
             if (res.ok) {
@@ -177,7 +180,7 @@ function TopicsPageContent() {
         if (!confirm('この情報源を削除しますか？')) return;
 
         try {
-            const res = await fetch(`/api/sources/${id}`, { method: 'DELETE' });
+            const res = await fetch(`/api/sources/${id}`, { method: 'DELETE', credentials: 'include' });
             if (res.ok) {
                 setSources(sources.filter(s => s.id !== id));
             } else {
@@ -193,7 +196,7 @@ function TopicsPageContent() {
 
         setIsFetchingSuggestions(true);
         try {
-            const res = await fetch(`/api/topics/${selectedTopicId}/suggest-sources`);
+            const res = await fetch(`/api/topics/${selectedTopicId}/suggest-sources`, { credentials: 'include' });
             if (res.ok) {
                 const { suggestions } = await res.json();
                 setSuggestedSources(suggestions || []);
@@ -219,6 +222,7 @@ function TopicsPageContent() {
                     topicId: selectedTopicId,
                     url: suggestion.url,
                 }),
+                credentials: 'include',
             });
 
             if (res.ok) {
